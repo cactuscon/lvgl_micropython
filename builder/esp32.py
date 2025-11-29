@@ -1136,6 +1136,18 @@ def update_mpconfigboard():
 
         write_file(mpconfigboard_cmake_path, data)
 
+    mpconfigboard_h_path = (
+        'lib/micropython/ports/esp32/boards/'
+        f'{board}/mpconfigboard.h'
+    )
+
+    if os.path.exists(mpconfigboard_h_path):
+        data = read_file('esp32', mpconfigboard_h_path)
+        if 'MICROPY_HW_ESP_NEW_I2C_DRIVER' not in data:
+            data = '#define MICROPY_HW_ESP_NEW_I2C_DRIVER 1\n' + data
+            write_file(mpconfigboard_h_path, data)
+
+
 
 def update_mpconfigport():
     data = read_file('esp32', MPCONFIGPORT_PATH)
@@ -1449,6 +1461,7 @@ def compile(*args):  # NOQA
     global flash_size
 
     env, cmds = setup_idf_environ()
+    patch_i2c_driver_conflict(env['IDF_PATH'])
     add_components(env, cmds[:])
     user_c_module()
 
@@ -1710,6 +1723,31 @@ def compile(*args):  # NOQA
     finally:
         revert_custom_board()
         revert_files('esp32')
+
+
+def patch_i2c_driver_conflict(idf_path):
+    i2c_c_path = os.path.join(idf_path, 'components/driver/i2c/i2c.c')
+
+    if not os.path.exists(i2c_c_path):
+        return
+
+    with open(i2c_c_path, 'r') as f:
+        lines = f.readlines()
+
+    func_start = -1
+    for i, line in enumerate(lines):
+        if 'check_i2c_driver_conflict' in line and '(' in line:
+            func_start = i
+            break
+
+    if func_start != -1:
+        for i in range(func_start, len(lines)):
+            if 'abort();' in lines[i]:
+                if '//' not in lines[i]:
+                    lines[i] = lines[i].replace('abort();', '// abort();')
+                    with open(i2c_c_path, 'w') as f:
+                        f.writelines(lines)
+                break
 
 
 def mpy_cross():
