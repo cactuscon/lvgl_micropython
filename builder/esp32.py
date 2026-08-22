@@ -16,7 +16,7 @@ from . import (
     scrub_build_folder
 )
 
-IDF_VER = '5.4.2'
+IDF_VER = '5.5.1'
 
 
 def get_partition_file_name(otp):
@@ -158,7 +158,7 @@ def get_espidf():
         ]
     ]
     print()
-    print(f'collecting ESP-IDF v5.4.2')
+    print(f'collecting ESP-IDF v5.5.1')
     print('this might take a while...')
     result, _ = spawn(cmd, spinner=True)
     if result != 0:
@@ -235,7 +235,7 @@ def repl_args(extra_args):
         action='store'
     )
 
-    if mcu in ('esp32s3', 'esp32s2', 'esp32c3', 'esp32c6'):
+    if mcu in ('esp32p4', 'esp32s3', 'esp32s2', 'esp32c3', 'esp32c6'):
         esp_argParser.add_argument(
             '--enable-cdc-repl',
             dest='enable_cdc_repl',
@@ -256,7 +256,7 @@ def repl_args(extra_args):
     enable_uart_repl = esp_args.enable_uart_repl
     uart_repl_bitrate = esp_args.uart_repl_bitrate
 
-    if mcu in ('esp32s3', 'esp32s2', 'esp32c3', 'esp32c6'):
+    if mcu in ('esp32p4', 'esp32s3', 'esp32s2', 'esp32c3', 'esp32c6'):
         enable_cdc_repl = esp_args.enable_cdc_repl
         enable_jtag_repl = esp_args.enable_jtag_repl
 
@@ -317,7 +317,7 @@ def common_args(extra_args):
         raise RuntimeError('Board is not currently supported')
 
     if board in (
-        'UM_NANOS3', 'ESP32_GENERIC_S3',
+        'UM_NANOS3', 'ESP32_GENERIC_S3', 'ESP32_GENERIC_P4'
         'UM_TINYS3', 'UM_TINYWATCHS3'
     ):
         def_flash_size = 8
@@ -484,7 +484,7 @@ def common_args(extra_args):
 optimum_fb_size = '0'
 
 
-def esp32_s3_args(extra_args):
+def esp32_s3_p4_args(extra_args):
     if custom_board_path is not None:
         return extra_args
 
@@ -557,6 +557,8 @@ def esp32_args(extra_args):
 def parse_args(extra_args, lv_cflags, brd):
     global board
 
+    copy_micropy_updates('esp32')
+
     if brd is None:
         brd = 'ESP32_GENERIC'
 
@@ -566,8 +568,8 @@ def parse_args(extra_args, lv_cflags, brd):
 
     if board == 'ESP32_GENERIC':
         extra_args = esp32_args(extra_args)
-    elif board == 'ESP32_GENERIC_S3':
-        extra_args = esp32_s3_args(extra_args)
+    elif board in ('ESP32_GENERIC_S3', 'ESP32_GENERIC_P4'):
+        extra_args = esp32_s3_p4_args(extra_args)
 
     extra_args = repl_args(extra_args)
 
@@ -943,7 +945,7 @@ def submodules():
         ['./install.sh', 'all']
     ]
 
-    print(f'setting up ESP-IDF v5.4.2')
+    print(f'setting up ESP-IDF v5.5.1')
     print('this might take a while...')
     env = {k: v for k, v in os.environ.items()}
     env['IDF_PATH'] = os.path.abspath(idf_path)
@@ -963,8 +965,11 @@ def submodules():
         file = os.path.join('lib/micropython/lib', name, file)
         if not os.path.exists(file):
             cmds.extend([
-                [f'git submodule sync lib/{name}'],
-                [f'git submodule update --init --depth=1 lib/{name}']
+                ['git', 'submodule', 'sync', '--', f'lib/{name}'],
+                [
+                    'git', 'submodule', 'update', '--init', '--depth=1',
+                    '--', f'lib/{name}'
+                ]
             ])
     if cmds:
         cmds.insert(0, ['cd lib/micropython'])
@@ -976,6 +981,8 @@ def submodules():
 
     if 'GITHUB_RUN_ID' in os.environ:
         cmds.insert(0, [f'export "IDF_PATH={os.path.abspath(idf_path)}"'])
+
+    update_makefile()
 
     cmds.append(submodules_cmd[:])
 
@@ -1021,13 +1028,13 @@ def find_esp32_ports(chip):
 
 
 SDKCONFIG_PATH = f'build/sdkconfig.board'
-
 MPTHREADPORT_H_PATH = 'lib/micropython/ports/esp32/mpthreadport.h'
 MPTHREADPORT_PATH = 'lib/micropython/ports/esp32/mpthreadport.c'
 MPCONFIGPORT_PATH = 'lib/micropython/ports/esp32/mpconfigport.h'
 PANICHANDLER_PATH = 'lib/micropython/ports/esp32/panichandler.c'
 MPHALPORT_PATH = 'lib/micropython/ports/esp32/mphalport.c'
 MAIN_PATH = 'lib/micropython/ports/esp32/main.c'
+MAKEFILE_PATH = 'lib/micropython/ports/esp32/Makefile'
 
 
 if not os.path.exists('micropy_updates/originals/esp32'):
@@ -1119,9 +1126,14 @@ def update_mpconfigboard():
     if custom_board_path is not None:
         return
 
+    if board == 'ESP32_GENERIC_P4' and board_variant:
+        filename = f'mpconfigvariant_{board_variant}.cmake'
+    else:
+        filename = 'mpconfigboard.cmake'
+
     mpconfigboard_cmake_path = (
         'lib/micropython/ports/esp32/boards/'
-        f'{board}/mpconfigboard.cmake'
+        f'{board}/{filename}'
     )
 
     data = read_file('esp32', mpconfigboard_cmake_path)
@@ -1282,6 +1294,12 @@ def update_mkrules():
 
         with open(mkrules_path, 'wb') as f:
             f.write(data.encode('utf-8'))
+
+
+def update_makefile():
+    data = read_file('esp32', MAKEFILE_PATH)
+    data = data.replace('IDF_COMPONENT_MANAGER=0', 'IDF_COMPONENT_MANAGER=1')
+    write_file(MAKEFILE_PATH, data)
 
 
 def update_main():
@@ -1461,7 +1479,7 @@ def compile(*args):  # NOQA
     global flash_size
 
     env, cmds = setup_idf_environ()
-    patch_i2c_driver_conflict(env['IDF_PATH'])
+    env['IDF_COMPONENT_MANAGER'] = '1'
     add_components(env, cmds[:])
     user_c_module()
 
@@ -1486,8 +1504,6 @@ def compile(*args):  # NOQA
     update_mpconfigboard()
     update_mpconfigport()
     update_mkrules()
-
-    copy_micropy_updates('esp32')
 
     try:
         cmd_ = compile_cmd[:]
@@ -1694,6 +1710,11 @@ def compile(*args):  # NOQA
 
                     output = output.replace('(PORT)', PORT)
 
+                while 'esptool' in args:
+                    args.remove('esptool')
+
+                args.remove('-m')
+
                 esptool.main(args)
                 print()
                 print('firmware flashed')
@@ -1723,32 +1744,6 @@ def compile(*args):  # NOQA
     finally:
         revert_custom_board()
         revert_files('esp32')
-
-
-def patch_i2c_driver_conflict(idf_path):
-    i2c_c_path = os.path.join(idf_path, 'components/driver/i2c/i2c.c')
-
-    if not os.path.exists(i2c_c_path):
-        return
-
-    with open(i2c_c_path, 'r') as f:
-        lines = f.readlines()
-
-    func_start = -1
-    for i, line in enumerate(lines):
-        if 'check_i2c_driver_conflict' in line and '(' in line:
-            func_start = i
-            break
-
-    if func_start != -1:
-        for i in range(func_start, len(lines)):
-            if 'abort();' in lines[i]:
-                if '//' not in lines[i]:
-                    lines[i] = lines[i].replace('abort();', '// abort();')
-                    with open(i2c_c_path, 'w') as f:
-                        f.writelines(lines)
-                break
-
 
 def mpy_cross():
     return_code, _ = spawn(mpy_cross_cmd, cmpl=True)
