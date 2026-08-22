@@ -965,8 +965,11 @@ def submodules():
         file = os.path.join('lib/micropython/lib', name, file)
         if not os.path.exists(file):
             cmds.extend([
-                [f'git submodule sync lib/{name}'],
-                [f'git submodule update --init --depth=1 lib/{name}']
+                ['git', 'submodule', 'sync', '--', f'lib/{name}'],
+                [
+                    'git', 'submodule', 'update', '--init', '--depth=1',
+                    '--', f'lib/{name}'
+                ]
             ])
     if cmds:
         cmds.insert(0, ['cd lib/micropython'])
